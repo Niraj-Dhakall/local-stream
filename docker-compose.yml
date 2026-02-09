@@ -1,0 +1,12 @@
+services:
+  frontend:
+    build: ./web
+    ports:
+      - "3000:3000"
+    depends_on: [backend]
+    restart: always
+  backend:
+    build:
+      context: ./server
+    ports: ["8080:8080"]
+    restart: always
