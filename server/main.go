@@ -20,7 +20,7 @@ var upgrader = websocket.Upgrader{
 }
 
 var (
-	charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	rng     = rand.New(rand.NewSource(time.Now().UnixNano()))
 )
 
@@ -85,6 +85,16 @@ func createRoom(code string) *Room {
 	return room
 
 }
+func deleteRoom(code string) error{
+	roomsMu.Lock()
+	delete(rooms, code)
+	roomsMu.Unlock()
+	exists := findRoom(code)
+	if(exists == nil){
+		return nil
+	}
+	return errors.New("Room not deleted")
+}
 
 // Generate a string for a given room
 func getCode() string {
@@ -143,9 +153,7 @@ func removeStreamer(room *Room) {
 	broadcastToViewers(viewers, msg)
 	time.Sleep(30 * time.Second)
 
-	roomsMu.Lock()
-	delete(rooms, room.code)
-	roomsMu.Unlock()
+	
 
 }
 
@@ -156,6 +164,8 @@ func joinAsStreamer(room *Room, sc *SafeConn) error {
 
 	if room.streamer != nil {
 		log.Print("Streamer already connected in: ", room.code)
+		msg, _ := json.Marshal(map[string]string{"type": "Error", "message": "Streamer already connected in this room." })
+		sc.WriteJSON(msg);
 		return errors.New("streamer already connected")
 	}
 
@@ -182,6 +192,7 @@ func removeViewer(room *Room, id string) {
 	room.mu.Lock()
 	defer room.mu.Unlock()
 	delete(room.viewers, id)
+	log.Print("Viewer left: ", id)
 	msg, _ := json.Marshal(map[string]string{"type": "viewer-left", "viewerID": id})
 	if room.streamer != nil {
 		room.streamer.WriteJSON(msg)
@@ -365,9 +376,124 @@ func handleWebSockets(w http.ResponseWriter, r *http.Request) {
 
 }
 
+func handleRoomStreamerCheck(w http.ResponseWriter, r *http.Request){
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	urlRoom := r.URL.Query().Get("room")
+	if urlRoom == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(Response{Status: "error", Message: "Room code is required"})
+		return
+	}
+
+	room := findRoom(urlRoom)
+	if room == nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(Response{Status: "error", Message: "Room not found"})
+		return
+	}
+
+	room.mu.RLock()
+	hasStreamer := room.streamer != nil
+	room.mu.RUnlock()
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "success",
+		"hasStreamer": hasStreamer,
+		"roomCode": room.code,
+	})
+}
+
+func handleViewerRoomCheck(w http.ResponseWriter, r *http.Request){
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	urlRoom := r.URL.Query().Get("room")
+	if urlRoom == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(Response{Status: "error", Message: "Room code is required"})
+		return
+	}
+
+	room := findRoom(urlRoom)
+	exists := room != nil
+	if room == nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "fail",
+			"exists": exists,
+		})
+		return
+	}
+	
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "success",
+		"exists": exists,
+		"roomCode": room.code,
+	})
+}
+func handleRoomDelete(w http.ResponseWriter, r *http.Request){
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	urlRoom := r.URL.Query().Get("room")
+	if urlRoom == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(Response{Status: "error", Message: "Room code is required"})
+		return
+	}
+	err := deleteRoom(urlRoom);
+	if(err != nil){
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "success",
+		})
+		return
+	}
+	w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "fail",
+			
+		})
+
+}
 func main() {
 	http.HandleFunc("/ws", handleWebSockets)
 	http.HandleFunc("/api/rooms", handleCreateRoom)
-	log.Println("Signaling server listening on :8081")
-	log.Fatal(http.ListenAndServe(":8081", nil))
+	http.HandleFunc("/api/rooms/del", handleRoomDelete)
+	http.HandleFunc("/api/rooms/viewer", handleViewerRoomCheck)
+	http.HandleFunc("/api/rooms/streamer", handleRoomStreamerCheck)
+	log.Println("Signaling server listening on :8080")
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }

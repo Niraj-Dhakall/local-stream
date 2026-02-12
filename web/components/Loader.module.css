@@ -1,0 +1,61 @@
+.loader8 {
+  --block-size: 48px;
+  --dot-size: 8px;
+  --dot-size-half: calc(var(--dot-size) / 2);
+  --anim-duration: 0.8s;
+
+  width: var(--block-size);
+  aspect-ratio: 1 / 1;
+  position: relative;
+
+  border: 1px dashed currentColor;
+  border-radius: 50%;
+
+  perspective: 50vmin;
+  transform-style: preserve-3d;
+  transform: rotateX(45deg) rotateY(15deg);
+}
+
+.loader8::before,
+.loader8::after {
+  content: "";
+  position: absolute;
+  animation: loader8 var(--anim-duration) cubic-bezier(0.39, 0.24, 0, 0.99) infinite;
+}
+
+.loader8::before {
+  --z-dist: 8vmin;
+
+  width: var(--dot-size);
+  aspect-ratio: 1 / 1;
+  background: currentColor;
+  border-radius: 50%;
+
+  top: calc(50% - var(--dot-size-half));
+  left: calc(50% - var(--dot-size-half));
+
+  animation-delay: calc(var(--anim-duration) / 4 * -1);
+}
+
+.loader8::after {
+  --z-dist: 4vmin;
+
+  width: 65%;
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+
+  top: 17.5%;
+  left: 17.5%;
+}
+
+@keyframes loader8 {
+  0%,
+  100% {
+    transform: translateZ(calc(var(--z-dist) * -1)) scale(0.6);
+  }
+
+  55% {
+    transform: translateZ(var(--z-dist));
+  }
+}
