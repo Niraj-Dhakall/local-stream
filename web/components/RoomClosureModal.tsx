@@ -3,8 +3,15 @@
 import useCountdown from "@/hooks/useCountdown";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { API_URL } from "@/lib/config";
 
-export function RoomClosureModal() {
+interface RoomClosureModalProps {
+  roomCode: string;
+  streamerReconnected?: boolean;
+  onStreamerReconnected?: () => void;
+}
+
+export function RoomClosureModal({ roomCode, streamerReconnected, onStreamerReconnected }: RoomClosureModalProps) {
   const router = useRouter();
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
 
@@ -18,20 +25,32 @@ export function RoomClosureModal() {
       const expiresAtInt = parseInt(stored);
       if (expiresAtInt <= Date.now()) {
         localStorage.removeItem("roomExpiresAt");
-        router.push("/");
         return;
       }
       setExpiresAt(expiresAtInt);
     }
   }, [router]);
 
-  const { seconds } = useCountdown({
+  const { seconds, pause } = useCountdown({
     autoStart: true,
     onComplete: handleComplete,
     expiresAt: expiresAt || Date.now() + 30000,
   });
 
-  function handleComplete() {
+  useEffect(() => {
+    if (streamerReconnected) {
+      pause();
+      localStorage.removeItem("roomExpiresAt");
+      onStreamerReconnected?.();
+    }
+  }, [streamerReconnected, onStreamerReconnected, pause]);
+
+  async function handleComplete() {
+    try {
+      await fetch(`${API_URL}/api/rooms/${roomCode}`, { method: "DELETE" });
+    } catch (error) {
+      console.error("Failed to close room:", error);
+    }
     localStorage.removeItem("roomExpiresAt");
     router.push("/");
   }

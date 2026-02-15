@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-
+import { API_URL } from "@/lib/config";
 import { ICE_SERVERS } from "@/lib/config";
 import useWebSocketConnection from "@/hooks/useWebSocketConnection";
 type StreamError = {
@@ -33,9 +33,26 @@ export default function StreamerView({ roomCode, onError, setConnection }: Strea
   const videoRef = useRef<HTMLVideoElement | null>(null); // video reference (lowkey i might remove this)
   const q = useRef<string[]>([]); // queue of viewers before screen capture
   const [hideStream, setHideStream] = useState(false);
+  const [hasStreamer, setHasStreamer] = useState<boolean | null>(null);
+  useEffect(() => {
+    async function fetchStreamer() {
+      const res = await fetch(`${API_URL}/api/rooms/streamer?room=${roomCode}`, {
+        method: "GET",
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setHasStreamer(data.hasStreamer);
+      } else {
+        setHasStreamer(false);
+      }
+    }
+    fetchStreamer();
+  }, []);
+
   useEffect(() => {
     setConnection(connectionState);
   }, [connectionState]);
+
   async function handleMessage(event: MessageEvent) {
     const msg = JSON.parse(event.data);
     switch (msg.type) {
@@ -44,10 +61,16 @@ export default function StreamerView({ roomCode, onError, setConnection }: Strea
         createPeerForViewer(msg.viewerID);
         break;
       }
-      case "error":
+      case "error":{
         onerror?.(msg.message);
         onError({ type: "Error", message: msg.message });
         break;
+      }
+      case"streamer-message": {
+        onError({ type: "Message", message: msg.message });
+
+      }
+    
       case "answer": {
         const pc = pcRef.current.get(msg.viewerID);
         pc?.setRemoteDescription({ type: "answer", sdp: msg.sdp });
@@ -66,10 +89,13 @@ export default function StreamerView({ roomCode, onError, setConnection }: Strea
       }
     }
   }
+
   useEffect(() => {
     return () => {
       pcRef.current.forEach((pc) => pc.close());
       pcRef.current.clear();
+      
+      streamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, []);
 
@@ -103,7 +129,15 @@ export default function StreamerView({ roomCode, onError, setConnection }: Strea
     await pc.setLocalDescription(offer);
     sendMessage({ type: "offer", viewerID: viewerID, sdp: offer.sdp });
   }
+
   useEffect(() => {
+    if (hasStreamer === null) return;
+
+    if (hasStreamer) {
+      onError({ type: "Error", message: "There is already a streamer in this room" });
+      return;
+    }
+
     (async () => {
       try {
         const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -121,10 +155,11 @@ export default function StreamerView({ roomCode, onError, setConnection }: Strea
       } catch (error) {
         let message = "Unknown error";
         error instanceof Error ? (message = error.message) : (message = "Error recording");
-        console.log(message);
+        onError({ type: "Error", message });
       }
     })();
-  }, []);
+  }, [hasStreamer]);
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-3">
@@ -137,11 +172,9 @@ export default function StreamerView({ roomCode, onError, setConnection }: Strea
         <span className="text-neutral-400 text-sm">Preview of your shared screen</span>
       </div>
 
-      {!hideStream && (
-        <div className="w-full max-w-2xl">
-          <video ref={videoRef} autoPlay playsInline muted />
-        </div>
-      )}
+      <div className={`w-full max-w-2xl ${hideStream ? "hidden" : ""}`}>
+        <video ref={videoRef} autoPlay playsInline muted />
+      </div>
     </div>
   );
 }

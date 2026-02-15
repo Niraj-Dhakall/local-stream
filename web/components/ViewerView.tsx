@@ -44,6 +44,9 @@ export default function ViewerView({ roomCode, onError, setConnection }: ViewerV
         sendMessage({ type: "answer", sdp: ans?.sdp });
         break;
       }
+      case "streamer-reconnected": {
+        onError({ type: "Message", message: "Streamer has reconnected" })
+      }
       case "ice-candidate": {
         await pcRef.current?.addIceCandidate(msg.candidate);
         break;

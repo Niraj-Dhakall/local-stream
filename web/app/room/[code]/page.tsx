@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import StreamerView from "@/components/StreamerView";
 import ViewerView from "@/components/ViewerView";
@@ -29,6 +29,8 @@ export default function RoomPage() {
   const [roomExists, setRoomExists] = useState(false);
   const [connectionState, setConnectionState] = useState<ConnectionState>("initializing");
   const [roomClosing, setRoomClosing] = useState(false);
+  const [streamerReconnected, setStreamerReconnected] = useState(false);
+
   useEffect(() => {
     const fetchData = async () => {
       const res = await fetch(`${API_URL}/api/rooms/viewer?room=${roomCode}`, {
@@ -43,14 +45,32 @@ export default function RoomPage() {
       fetchData();
     }
   }, []);
+  useEffect(() => {
+    if (connectionState === "connected") {
+      setRoomClosing(false);
+    }
+  }, [connectionState]);
+
   function handleError(e: StreamError) {
+    setstreamError({ type: "", message: "" });
     if (e.message.includes("Streamer has left, room will be closed in 30 seconds.")) {
       setRoomClosing(true);
     }
+    if(e.message.includes("Streamer has reconnected")){
+      setRoomClosing(false);
+      localStorage.removeItem("roomExpiresAt")
+    }
     setstreamError(e);
   }
+
   function setState(state: ConnectionState) {
     setConnectionState(state);
+
+    if (role === "streamer" && state === "connected" && roomClosing) {
+      console.log("Streamer reconnected, stopping countdown");
+      setStreamerReconnected(true);
+      setstreamError({ type: "", message: "" });
+    }
   }
 
   if (!roomExists) {
@@ -123,24 +143,31 @@ export default function RoomPage() {
         </span>
         <ConnectionStatusBadge details={connectionState} />
       </div>
-      <div className="w-full flex justify-end z-10">
-        {streamError ? (
+      <div className="w-full flex justify-end z-10 fixed">
+        {streamError.message ? (
           <ErrorComponent Message={streamError.message} Type={streamError.type} />
         ) : (
           ""
         )}
       </div>
-      {roomClosing ? (
-        <RoomClosureModal />
-      ) : (
-        <div className="p-4">
-          {role === "streamer" ? (
-            <StreamerView roomCode={roomCode} onError={handleError} setConnection={setState} />
-          ) : (
-            <ViewerView roomCode={roomCode} onError={handleError} setConnection={setState} />
-          )}
-        </div>
+      {roomClosing && (
+        <RoomClosureModal
+          roomCode={roomCode}
+          streamerReconnected={streamerReconnected}
+          onStreamerReconnected={() => {
+            setRoomClosing(false);
+            setStreamerReconnected(false);
+            setstreamError({ type: "", message: "" });
+          }}
+        />
       )}
+      <div className={`p-4 ${roomClosing ? "hidden" : ""}`}>
+        {role === "streamer" ? (
+          <StreamerView roomCode={roomCode} onError={handleError} setConnection={setState} />
+        ) : (
+          <ViewerView roomCode={roomCode} onError={handleError} setConnection={setState} />
+        )}
+      </div>
     </div>
   );
 }

@@ -1,6 +1,5 @@
-"use client";
-import { RoomClosureModal } from "@/components/RoomClosureModal";
+'use client'
 
-export default function page() {
-  return <RoomClosureModal />;
+export default function Page(){
+    
 }

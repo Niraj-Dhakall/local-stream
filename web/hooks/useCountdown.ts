@@ -28,12 +28,12 @@ const useCountdown = ({
   const [remainingSeconds, setRemainingSeconds] = useState(0);
   const [isActive, setIsActive] = useState(false);
 
-  const calculateRemainingTime = () => {
+  const calculateRemainingTime = (ea?: number) => {
     const now = Date.now();
-    const remaining = Math.max(0, Math.ceil((expiresAt - now) / 1000));
-    
+    const remaining = Math.max(0, Math.ceil((ea ? ea : expiresAt - now) / 1000));
+
     setRemainingSeconds(remaining);
-    
+
     if (remaining <= 0) {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
@@ -46,12 +46,12 @@ const useCountdown = ({
 
   useEffect(() => {
     calculateRemainingTime();
-    
+
     if (autoStart) {
       intervalRef.current = window.setInterval(calculateRemainingTime, 1000);
       setIsActive(true);
     }
-    
+
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
@@ -60,7 +60,7 @@ const useCountdown = ({
   }, [expiresAt, autoStart, onComplete]);
   const pause = (): void => {
     if (!isActive || !intervalRef.current) return;
-    
+
     clearInterval(intervalRef.current);
     intervalRef.current = null;
     setIsActive(false);
@@ -68,7 +68,7 @@ const useCountdown = ({
 
   const start = (): void => {
     if (isActive || remainingSeconds <= 0) return;
-    
+
     intervalRef.current = window.setInterval(calculateRemainingTime, 1000);
     setIsActive(true);
   };
@@ -79,7 +79,7 @@ const useCountdown = ({
       intervalRef.current = null;
     }
     const newExpiresAt = Date.now() + (time?.seconds || seconds) * 1000;
-    
+    calculateRemainingTime(newExpiresAt);
     if (autoStart) {
       intervalRef.current = window.setInterval(calculateRemainingTime, 1000);
       setIsActive(true);
@@ -96,7 +96,7 @@ const useCountdown = ({
     resume: start,
     seconds: remainingSeconds,
   };
-  
+
   return countdown;
 };
 

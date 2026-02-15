@@ -34,6 +34,7 @@ type Room struct {
 	code     string
 	streamer *SafeConn
 	viewers  map[string]*SafeConn
+	closeChan chan struct{}
 }
 
 var (
@@ -82,6 +83,7 @@ func createRoom(code string) *Room {
 	defer roomsMu.Unlock()
 	room := &Room{code: code, viewers: make(map[string]*SafeConn)}
 	rooms[code] = room
+	
 	return room
 
 }
@@ -144,32 +146,59 @@ func getOrCreateRoomSteamer(code string) (*Room, error) {
 func removeStreamer(room *Room) {
 	room.mu.Lock()
 	room.streamer = nil
+	closeCh := make(chan struct{})
+	room.closeChan = closeCh
 	viewers := make([]*SafeConn, 0, len(room.viewers))
 	for _, v := range room.viewers {
 		viewers = append(viewers, v)
 	}
 	room.mu.Unlock()
+
 	msg, _ := json.Marshal(map[string]string{"type": "viewer-message", "message": "Streamer has left, room will be closed in 30 seconds."})
 	broadcastToViewers(viewers, msg)
-	time.Sleep(30 * time.Second)
 
-	
-
+	select {
+	case <-closeCh:
+		log.Println("Streamer reconnected, cancelling room closure for:", room.code)
+	case <-time.After(30 * time.Second):
+		log.Println("Room closure timeout reached for:", room.code)
+	}
 }
 
 // add a streamer to a given room
 func joinAsStreamer(room *Room, sc *SafeConn) error {
 	room.mu.Lock()
-	defer room.mu.Unlock()
 
 	if room.streamer != nil {
+		room.mu.Unlock()
 		log.Print("Streamer already connected in: ", room.code)
-		msg, _ := json.Marshal(map[string]string{"type": "Error", "message": "Streamer already connected in this room." })
-		sc.WriteJSON(msg);
+		msg, _ := json.Marshal(map[string]string{"type": "streamer-message", "message": "Streamer already connected in this room."})
+		sc.WriteJSON(msg)
 		return errors.New("streamer already connected")
 	}
 
 	room.streamer = sc
+
+	// cancel pending room closure if any
+	closeCh := room.closeChan
+	room.closeChan = nil
+
+	// collect viewers to notify
+	viewers := make([]*SafeConn, 0, len(room.viewers))
+	for _, v := range room.viewers {
+		viewers = append(viewers, v)
+	}
+	room.mu.Unlock()
+
+	if closeCh != nil {
+		close(closeCh)
+	}
+
+	if len(viewers) > 0 {
+		msg, _ := json.Marshal(map[string]string{"type": "streamer-reconnected", "message": "Streamer has reconnected."})
+		broadcastToViewers(viewers, msg)
+	}
+
 	return nil
 }
 

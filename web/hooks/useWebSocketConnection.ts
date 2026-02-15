@@ -75,12 +75,14 @@ const useWebSocketConnection = (
     reconnecting.current = 0;
   };
   // handle when the Websocket closes
-  const handleClose = () => {
+  const handleClose = (event: CloseEvent) => {
+    if ((event.target as WebSocket) !== wsRef.current) return;
     if (manualCloseRef.current) {
       setConnectionState("disconnected");
-      return; // manual close protection
+      return;
     }
     setConnectionState("disconnected");
+    if (event.code === 1000 || event.code === 1001) return;
     const delay = getReconnectDelay(reconnecting.current);
     scheduleReconnect(delay);
   };
@@ -111,7 +113,7 @@ const useWebSocketConnection = (
     ws.onopen = handleOpen;
     ws.onclose = handleClose;
     ws.onerror = handleError;
-    ws.onmessage = omRef.current;
+    ws.onmessage = (event) => omRef.current(event);
   };
   // schedules reconnect after given delay
   const scheduleReconnect = (delay: number) => {
@@ -143,7 +145,10 @@ const useWebSocketConnection = (
   return {
     ws: wsRef.current,
     connectionState: connectionState,
-    reconnect: () => attemptReconnection(),
+    reconnect: () => {
+      reconnecting.current = 0;
+      attemptReconnection();
+    },
     isReconnecting: isReconnecting,
     sendMessage: (data) => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
