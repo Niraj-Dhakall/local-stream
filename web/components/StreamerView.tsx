@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { API_URL } from "@/lib/config";
 import { ICE_SERVERS } from "@/lib/config";
 import useWebSocketConnection from "@/hooks/useWebSocketConnection";
+import { Dot } from "lucide-react";
 type StreamError = {
   type: string;
   message: string;
@@ -19,9 +20,10 @@ interface StreamerViewProps {
   roomCode: string;
   onError: (error: StreamError) => void;
   setConnection: (state: ConnectionState) => void;
+  setViewerCount: (count: number) => void;
 }
 
-export default function StreamerView({ roomCode, onError, setConnection }: StreamerViewProps) {
+export default function StreamerView({ roomCode, onError, setConnection, setViewerCount }: StreamerViewProps) {
   const { sendMessage, connectionState } = useWebSocketConnection({
     roomCode,
     role: "streamer",
@@ -34,6 +36,26 @@ export default function StreamerView({ roomCode, onError, setConnection }: Strea
   const q = useRef<string[]>([]); // queue of viewers before screen capture
   const [hideStream, setHideStream] = useState(false);
   const [hasStreamer, setHasStreamer] = useState<boolean | null>(null);
+  const [startTime] = useState(Date.now());
+  const [elaspedTime, setElaspedTime] = useState(0);
+  const [isSharing, setIsSharing] = useState(false)
+  useEffect(() =>{
+    const iID = setInterval(() => {
+      setElaspedTime(Date.now() - startTime)
+    }, 1000 )
+    
+
+    return () => clearInterval(iID);
+  }, [startTime])
+  const formatTime = (milliseconds : number) => {
+    const totalSeconds = Math.floor(milliseconds / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+  };
+
   useEffect(() => {
     async function fetchStreamer() {
       const res = await fetch(`${API_URL}/api/rooms/streamer?room=${roomCode}`, {
@@ -62,12 +84,12 @@ export default function StreamerView({ roomCode, onError, setConnection }: Strea
         break;
       }
       case "error":{
-        onerror?.(msg.message);
         onError({ type: "Error", message: msg.message });
         break;
       }
       case"streamer-message": {
         onError({ type: "Message", message: msg.message });
+        break;
 
       }
     
@@ -85,6 +107,10 @@ export default function StreamerView({ roomCode, onError, setConnection }: Strea
         const pc = pcRef.current.get(msg.viewerID);
         pc?.close();
         pcRef.current.delete(msg.viewerID);
+        break;
+      }
+      case "viewer-count": {
+        setViewerCount(msg.count)
         break;
       }
     }
@@ -129,7 +155,30 @@ export default function StreamerView({ roomCode, onError, setConnection }: Strea
     await pc.setLocalDescription(offer);
     sendMessage({ type: "offer", viewerID: viewerID, sdp: offer.sdp });
   }
-
+  async function startScreenShare() {
+     try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: false,
+        });
+        stream.getVideoTracks()[0].onended = () => {
+          setIsSharing(false);
+          streamRef.current = null;
+        };
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+        setIsSharing(true);
+        // for early viewers
+        q.current.forEach(createPeerForViewer);
+        q.current = [];
+      } catch (error) {
+        let message = "Unknown error";
+        error instanceof Error ? (message = error.message) : (message = "Error recording");
+        onError({ type: "Error", message });
+      }
+  }
   useEffect(() => {
     if (hasStreamer === null) return;
 
@@ -139,24 +188,7 @@ export default function StreamerView({ roomCode, onError, setConnection }: Strea
     }
 
     (async () => {
-      try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({
-          video: true,
-          audio: false,
-        });
-
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
-        // for early viewers
-        q.current.forEach(createPeerForViewer);
-        q.current = [];
-      } catch (error) {
-        let message = "Unknown error";
-        error instanceof Error ? (message = error.message) : (message = "Error recording");
-        onError({ type: "Error", message });
-      }
+     startScreenShare();
     })();
   }, [hasStreamer]);
 
@@ -169,9 +201,19 @@ export default function StreamerView({ roomCode, onError, setConnection }: Strea
         >
           {hideStream ? "Show Video" : "Hide Video"}
         </button>
-        <span className="text-neutral-400 text-sm">Preview of your shared screen</span>
-      </div>
 
+        <button
+        onClick={()=>startScreenShare()}
+        className={`${isSharing ? "hidden": ""} bg-neutral-900 border border-neutral-800 text-white px-4 py-2 rounded-lg font-medium hover:bg-neutral-800 transition-colors`}
+        >
+        Share Screen
+        </button>
+        <span className="text-neutral-400 text-sm">Preview of your shared screen</span>
+        <div>
+          <span className="flex text-neutral-500 items-center"><Dot className="text-red-500 animate-pulse h-7 w-7"/>{formatTime(elaspedTime)}</span>
+        </div>
+      </div>
+      
       <div className={`w-full max-w-2xl ${hideStream ? "hidden" : ""}`}>
         <video ref={videoRef} autoPlay playsInline muted />
       </div>

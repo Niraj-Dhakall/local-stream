@@ -11,7 +11,7 @@ export function useRoomHealthCheck({
   roomCode,
   wsConnected,
   onRoomMissing,
-  intervalMs = 5000,
+  intervalMs = 10000,
 }: UseRoomHealthCheckOptions) {
   const [roomExists, setRoomExists] = useState<boolean | null>(null);
   const [isChecking, setIsChecking] = useState(false);
@@ -37,7 +37,7 @@ export function useRoomHealthCheck({
       setRoomExists(exist);
       setLastChecked(new Date());
 
-      if (!exist && hasTriggeredRef.current && onRoomMissing) {
+      if (!exist && !hasTriggeredRef.current && onRoomMissing) {
         hasTriggeredRef.current = true;
         onRoomMissing();
       }

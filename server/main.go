@@ -3,9 +3,10 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"math/rand"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -30,11 +31,12 @@ type SafeConn struct {
 }
 
 type Room struct {
-	mu       sync.RWMutex
-	code     string
-	streamer *SafeConn
-	viewers  map[string]*SafeConn
-	closeChan chan struct{}
+	mu         sync.RWMutex
+	code       string
+	streamer   *SafeConn
+	viewers    map[string]*SafeConn
+	closeChan  chan struct{}
+	emptyTimer *time.Timer
 }
 
 var (
@@ -47,12 +49,51 @@ type Response struct {
 	Message string `json:"message"`
 }
 
+// ========================== Helpers ==================================
 // instead of just writing message like before with a single conection we
 // will do this now
 func (sc *SafeConn) WriteJSON(msg []byte) error {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
+	if sc.conn == nil {
+		return nil
+	}
 	return sc.conn.WriteMessage(websocket.TextMessage, msg)
+}
+
+func (room *Room) startEmptyTimer() {
+	if room.emptyTimer != nil {
+		room.emptyTimer.Stop()
+	}
+
+	room.emptyTimer = time.AfterFunc(5*time.Minute, func() {
+		room.mu.RLock()
+		var empty bool
+		empty = len(room.viewers) == 0 && room.streamer == nil
+		room.mu.RUnlock()
+
+		if empty {
+			deleteRoom(room.code)
+		}
+	})
+}
+
+func checkCode(roomCode string) bool {
+	var alphanumeric = regexp.MustCompile("^[a-zA-Z0-9]+$")
+	return alphanumeric.MatchString(roomCode)
+
+}
+
+func broadCastViewerCount(room *Room) {
+	count := len(room.viewers)
+	msg, _ := json.Marshal(map[string]interface{}{"type": "viewer-count", "count": count})
+	// no mutex stuff since it will be handled in the main join/leave function
+	if room.streamer != nil {
+		room.streamer.WriteJSON(msg)
+	}
+	for _, v := range room.viewers {
+		v.WriteJSON(msg)
+	}
 }
 
 // ========================== Room ==================================
@@ -67,7 +108,8 @@ func findRoom(code string) *Room {
 	defer roomsMu.RUnlock()
 	room, ok := rooms[code]
 	if !ok {
-		log.Println("Error finding room")
+		slog.Info("Room not found", "code", code)
+		return nil
 
 	}
 	return room
@@ -83,16 +125,16 @@ func createRoom(code string) *Room {
 	defer roomsMu.Unlock()
 	room := &Room{code: code, viewers: make(map[string]*SafeConn)}
 	rooms[code] = room
-	
+	room.startEmptyTimer()
 	return room
 
 }
-func deleteRoom(code string) error{
+func deleteRoom(code string) error {
 	roomsMu.Lock()
 	delete(rooms, code)
 	roomsMu.Unlock()
 	exists := findRoom(code)
-	if(exists == nil){
+	if exists == nil {
 		return nil
 	}
 	return errors.New("Room not deleted")
@@ -146,22 +188,27 @@ func getOrCreateRoomSteamer(code string) (*Room, error) {
 func removeStreamer(room *Room) {
 	room.mu.Lock()
 	room.streamer = nil
-	closeCh := make(chan struct{})
+	closeCh := make(chan struct{}) // create a channel to send signal
 	room.closeChan = closeCh
 	viewers := make([]*SafeConn, 0, len(room.viewers))
 	for _, v := range room.viewers {
 		viewers = append(viewers, v)
 	}
+	room.startEmptyTimer()
 	room.mu.Unlock()
 
-	msg, _ := json.Marshal(map[string]string{"type": "viewer-message", "message": "Streamer has left, room will be closed in 30 seconds."})
+	msg, err := json.Marshal(map[string]string{"type": "viewer-message", "message": "Streamer has left, room will be closed in 30 seconds."})
+	if err != nil {
+		slog.Error("removeStreamer", "error", err)
+	}
 	broadcastToViewers(viewers, msg)
 
 	select {
-	case <-closeCh:
-		log.Println("Streamer reconnected, cancelling room closure for:", room.code)
+	case <-closeCh: // if we get a signal then the streamer reconnected
+		slog.Info("removeStreamer", "event","streamer reconnected", "room", room.code)
 	case <-time.After(30 * time.Second):
-		log.Println("Room closure timeout reached for:", room.code)
+		slog.Info("removeStreamer", "event","room closure timeout", "room", room.code)
+		deleteRoom(room.code)
 	}
 }
 
@@ -171,33 +218,52 @@ func joinAsStreamer(room *Room, sc *SafeConn) error {
 
 	if room.streamer != nil {
 		room.mu.Unlock()
-		log.Print("Streamer already connected in: ", room.code)
-		msg, _ := json.Marshal(map[string]string{"type": "streamer-message", "message": "Streamer already connected in this room."})
+		slog.Info("joinAsStreamer", "event", "streamer already connected", "room", room.code)
+		msg, err := json.Marshal(map[string]string{"type": "streamer-message", "message": "Streamer already connected in this room."})
+		if err != nil {
+			slog.Error("joinAsStreamer", "Marshalling error", err)
+		}
 		sc.WriteJSON(msg)
 		return errors.New("streamer already connected")
 	}
-
 	room.streamer = sc
-
-	// cancel pending room closure if any
+	if room.emptyTimer != nil {
+		room.emptyTimer.Stop()
+		room.emptyTimer = nil
+	}
+	// reconnection logic
 	closeCh := room.closeChan
 	room.closeChan = nil
 
-	// collect viewers to notify
 	viewers := make([]*SafeConn, 0, len(room.viewers))
 	for _, v := range room.viewers {
 		viewers = append(viewers, v)
 	}
+
 	room.mu.Unlock()
 
-	if closeCh != nil {
+	if closeCh != nil { // if there already was a disconnect channel, close it and send the signal
 		close(closeCh)
 	}
 
-	if len(viewers) > 0 {
-		msg, _ := json.Marshal(map[string]string{"type": "streamer-reconnected", "message": "Streamer has reconnected."})
+	if closeCh != nil && len(viewers) > 0 { // if the channel did exist and there are viewers it means that the streamer is reconnecting
+		msg, err := json.Marshal(map[string]string{"type": "streamer-reconnected", "message": "Streamer has reconnected."})
+		if err != nil {
+			slog.Error("joinAsStreamer", "Marshalling error", err)
+		}
 		broadcastToViewers(viewers, msg)
 	}
+
+	// for early viewers to the stream, because frontend needs new-viewer to create a new connection
+	room.mu.RLock()
+	for id := range room.viewers {
+		msg, err := json.Marshal(map[string]string{"type": "new-viewer", "viewerID": id})
+		if err != nil {
+			slog.Error("joinAsStreamer", "Marshalling error", err)
+		}
+		sc.WriteJSON(msg)
+	}
+	room.mu.RUnlock()
 
 	return nil
 }
@@ -209,7 +275,7 @@ func broadcastToViewers(viewers []*SafeConn, message []byte) {
 		go func(v *SafeConn) {
 			err := v.WriteJSON(message)
 			if err != nil {
-				log.Println("Write error", err)
+				slog.Error("Write error", "error", err)
 
 			}
 		}(viewer)
@@ -221,11 +287,19 @@ func removeViewer(room *Room, id string) {
 	room.mu.Lock()
 	defer room.mu.Unlock()
 	delete(room.viewers, id)
-	log.Print("Viewer left: ", id)
-	msg, _ := json.Marshal(map[string]string{"type": "viewer-left", "viewerID": id})
+	slog.Info("Viewer left", "viewerID", id)
+	msg, err := json.Marshal(map[string]string{"type": "viewer-left", "viewerID": id})
+	if err != nil{
+			slog.Error("removeStreamer", "Marshalling error", err)
+		}
 	if room.streamer != nil {
 		room.streamer.WriteJSON(msg)
 	}
+	empty := len(room.viewers) == 0
+	if empty {
+		room.startEmptyTimer()
+	}
+	broadCastViewerCount(room)
 
 }
 
@@ -270,10 +344,18 @@ func joinAsViewer(room *Room, sc *SafeConn, id string) error {
 		return errors.New("viewer already exists")
 	}
 	room.viewers[id] = sc
-	msg, _ := json.Marshal(map[string]string{"type": "new-viewer", "viewerID": id})
+	msg, err := json.Marshal(map[string]string{"type": "new-viewer", "viewerID": id})
+	if err != nil{
+			slog.Error("joinAsViewer", "Marshalling error", err)
+		}
 	if room.streamer != nil {
 		room.streamer.WriteJSON(msg)
 	}
+	if room.emptyTimer != nil {
+		room.emptyTimer.Stop()
+		room.emptyTimer = nil
+	}
+	broadCastViewerCount(room)
 	return nil
 }
 
@@ -298,17 +380,24 @@ func handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 
 // function for handling websocket request
 func handleWebSockets(w http.ResponseWriter, r *http.Request) {
-	log.Println("new request arrived")
+	slog.Info("handleWebSocketConnection","Info","new request arrived")
 	// get role from query (viewer or streamer)
 	role := r.URL.Query().Get("role")
 	if role != "streamer" && role != "viewer" {
-		log.Println("Invalid role:", role)
+		slog.Warn("Invalid role", "role", role)
 		return
 	}
 	var viewerID string
 	if role == "viewer" {
 		viewerID = r.URL.Query().Get("viewerID")
+		if viewerID == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			response := Response{Status: "error", Message: "No viewer id provided"}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
 	}
+
 	urlRoom := r.URL.Query().Get("room")
 
 	if urlRoom == "" {
@@ -318,21 +407,28 @@ func handleWebSockets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(urlRoom) != 6 || !checkCode(urlRoom) {
+		w.WriteHeader(http.StatusBadRequest)
+		response := Response{Status: "error", Message: "Code is wrong length or formatted wrong"}
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	// updgrade the http request to websocker
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Println("Upgrade error:", err)
+		slog.Error("Upgrade error", "error", err)
 		return
 	}
 
 	defer func() {
 		err := conn.Close()
 		if err != nil {
-			log.Println("Close error:", err)
+			slog.Error("Connection close error", "error", err)
 		}
 	}()
 
-	log.Println("New connection with role:", role)
+	slog.Info("New connection", "role", role)
 	sc := SafeConn{
 		conn: conn,
 	}
@@ -361,7 +457,7 @@ func handleWebSockets(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		joinAsViewer(room, &sc, viewerID)
-		log.Print("Viewer joined with ID:", viewerID)
+		slog.Info("Viewer joined", "viewerID", viewerID)
 		defer func() {
 			removeViewer(room, viewerID)
 		}()
@@ -369,7 +465,7 @@ func handleWebSockets(w http.ResponseWriter, r *http.Request) {
 	for {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
-			log.Println("Read error:", err)
+			slog.Warn("Read error", "error", err)
 			break
 		}
 		// if it's a streamer we need to write it's message to the viewer
@@ -377,12 +473,16 @@ func handleWebSockets(w http.ResponseWriter, r *http.Request) {
 			var streamerVID struct {
 				ViewerID string `json:"viewerID"`
 			}
-			json.Unmarshal(message, &streamerVID)
+			err = json.Unmarshal(message, &streamerVID)
+			if err != nil {
+				slog.Warn("Error unmarshalling streamer message", "error", err)
+				continue
+			}
 			viewer, err := findViewer(streamerVID.ViewerID, room)
 			if err == nil {
 				viewer.WriteJSON(message)
 			} else {
-				log.Println("Error finding viewer:", err)
+				slog.Warn("Error finding viewer", "error", err)
 			}
 		}
 		// viewer is more complicated, since we want to track users joining and leaving so
@@ -390,7 +490,10 @@ func handleWebSockets(w http.ResponseWriter, r *http.Request) {
 		if role == "viewer" {
 			// inject viewer id in to the message
 			var msg map[string]interface{} // interface since we don't know the fields
-			json.Unmarshal(message, &msg)
+			if err := json.Unmarshal(message, &msg); err != nil {
+				slog.Warn("Error unmarshalling viewer message","error", err)
+				continue
+			}
 			msg["viewerID"] = viewerID
 			updatedMsg, _ := json.Marshal(msg)
 			room.mu.Lock()
@@ -405,7 +508,7 @@ func handleWebSockets(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func handleRoomStreamerCheck(w http.ResponseWriter, r *http.Request){
+func handleRoomStreamerCheck(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
@@ -440,13 +543,13 @@ func handleRoomStreamerCheck(w http.ResponseWriter, r *http.Request){
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "success",
+		"status":      "success",
 		"hasStreamer": hasStreamer,
-		"roomCode": room.code,
+		"roomCode":    room.code,
 	})
 }
 
-func handleViewerRoomCheck(w http.ResponseWriter, r *http.Request){
+func handleViewerRoomCheck(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
@@ -476,15 +579,15 @@ func handleViewerRoomCheck(w http.ResponseWriter, r *http.Request){
 		})
 		return
 	}
-	
+
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "success",
-		"exists": exists,
+		"status":   "success",
+		"exists":   exists,
 		"roomCode": room.code,
 	})
 }
-func handleRoomDelete(w http.ResponseWriter, r *http.Request){
+func handleRoomDelete(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
@@ -502,27 +605,29 @@ func handleRoomDelete(w http.ResponseWriter, r *http.Request){
 		json.NewEncoder(w).Encode(Response{Status: "error", Message: "Room code is required"})
 		return
 	}
-	err := deleteRoom(urlRoom);
-	if(err != nil){
-		w.WriteHeader(http.StatusNotFound)
+	err := deleteRoom(urlRoom)
+	if err == nil {
+		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"status": "success",
 		})
 		return
 	}
 	w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status": "fail",
-			
-		})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "fail",
+	})
 
 }
 func main() {
 	http.HandleFunc("/ws", handleWebSockets)
-	http.HandleFunc("/api/rooms", handleCreateRoom)
-	http.HandleFunc("/api/rooms/del", handleRoomDelete)
-	http.HandleFunc("/api/rooms/viewer", handleViewerRoomCheck)
-	http.HandleFunc("/api/rooms/streamer", handleRoomStreamerCheck)
-	log.Println("Signaling server listening on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	http.HandleFunc("/api/rooms", handleCreateRoom) // create a room
+	http.HandleFunc("/api/rooms/del", handleRoomDelete) // delete a room
+	http.HandleFunc("/api/rooms/viewer", handleViewerRoomCheck) // checks if a room is still active
+	http.HandleFunc("/api/rooms/streamer", handleRoomStreamerCheck) // checks if a room has a streamer (for protection against someone overriding stream)
+	slog.Info("Server starting", "port", ":8080")
+	err := http.ListenAndServe(":8080", nil)
+	if err != nil {
+		slog.Error("Server failed", "error", err)
+	}
 }

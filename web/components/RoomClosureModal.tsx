@@ -47,11 +47,12 @@ export function RoomClosureModal({ roomCode, streamerReconnected, onStreamerReco
 
   async function handleComplete() {
     try {
-      await fetch(`${API_URL}/api/rooms/${roomCode}`, { method: "DELETE" });
+      await fetch(`${API_URL}/api/rooms/del?room=${roomCode}`, { method: "DELETE" });
     } catch (error) {
       console.error("Failed to close room:", error);
     }
     localStorage.removeItem("roomExpiresAt");
+    localStorage.removeItem("recent-room")
     router.push("/");
   }
 
@@ -63,10 +64,8 @@ export function RoomClosureModal({ roomCode, streamerReconnected, onStreamerReco
     <div className="w-full h-screen bg-black/90 flex items-center justify-center">
       <div className="p-4 flex flex-col border text-center text-3xl border-gray-400 w-fit h-fit rounded-lg">
         <p className="text-white font-bold mb-2">Room closing in</p>
-        <span className="text-white">
-          <span className={`text-${seconds <= 10 ? "red-400" : "white"} font-bold text-4xl`}>
-            {seconds}
-          </span>
+        <span className={`${seconds <= 10 ? "text-red-500" : "text-white"} font-bold text-4xl`}>
+          {seconds}
         </span>
         <button
           onClick={() => router.push("/")}

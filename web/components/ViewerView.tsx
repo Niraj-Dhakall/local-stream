@@ -2,6 +2,7 @@
 import { useEffect, useRef } from "react";
 import { ICE_SERVERS } from "@/lib/config";
 import useWebSocketConnection from "@/hooks/useWebSocketConnection";
+
 type StreamError = {
   type: string;
   message: string;
@@ -18,19 +19,22 @@ interface ViewerViewProps {
   roomCode: string;
   onError: (error: StreamError) => void;
   setConnection: (state: ConnectionState) => void;
+  setViewerCount: (count: number) => void;
 }
 
-export default function ViewerView({ roomCode, onError, setConnection }: ViewerViewProps) {
+export default function ViewerView({ roomCode, onError, setConnection, setViewerCount }: ViewerViewProps) {
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const viewerID = useRef(crypto.randomUUID()).current;
-  const { sendMessage, connectionState } = useWebSocketConnection({
+  const {sendMessage, connectionState } = useWebSocketConnection({
     roomCode,
     role: "viewer",
     onMessage: handleMessage,
     onError: onError,
     viewerID: viewerID,
   });
+
+  
   useEffect(() => {
     setConnection(connectionState);
   }, [connectionState]);
@@ -46,6 +50,7 @@ export default function ViewerView({ roomCode, onError, setConnection }: ViewerV
       }
       case "streamer-reconnected": {
         onError({ type: "Message", message: "Streamer has reconnected" })
+        break;
       }
       case "ice-candidate": {
         await pcRef.current?.addIceCandidate(msg.candidate);
@@ -53,10 +58,14 @@ export default function ViewerView({ roomCode, onError, setConnection }: ViewerV
       }
       case "viewer-message": {
         onError({ type: "Message", message: msg.message });
+        break;
       }
       case "error": {
-        onerror?.(msg.message);
         onError({ type: "Error", message: msg.message });
+        break;
+      }
+      case "viewer-count": {
+        setViewerCount(msg.count);
         break;
       }
     }

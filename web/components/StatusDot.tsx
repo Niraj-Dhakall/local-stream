@@ -44,46 +44,12 @@ const BADGE_COLORS = {
   red: "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-400",
 } as const;
 
-function formatUptime(connectedAt?: Date): string {
-  if (!connectedAt) return "—";
-  const seconds = Math.floor((Date.now() - connectedAt.getTime()) / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m`;
-}
+
 
 export function ConnectionStatusBadge({ details, className }: ConnectionStatusBadgeProps) {
   const config = STATUS_CONFIG[details];
 
-  const tooltipContent = useMemo(
-    () => (
-      <div className="space-y-1.5 text-xs">
-        <div className="flex justify-between gap-4">
-          <span className="text-muted-foreground">WebSocket</span>
-          <span className="font-medium capitalize">{details}</span>
-        </div>
-        {/* {details.rtcState && (
-          <div className="flex justify-between gap-4">
-            <span className="text-muted-foreground">RTC Peer</span>
-            <span className="font-medium capitalize">{details.rtcState}</span>
-          </div>
-        )}
-        <div className="flex justify-between gap-4">
-          <span className="text-muted-foreground">Uptime</span>
-          <span className="font-medium">{formatUptime(details.connectedAt)}</span>
-        </div>
-        {details.latencyMs != null && (
-          <div className="flex justify-between gap-4">
-            <span className="text-muted-foreground">Latency</span>
-            <span className="font-medium">{details.latencyMs}ms</span>
-          </div>
-        )} */}
-      </div>
-    ),
-    [details],
-  );
+
 
   return (
     <Tooltip>
@@ -111,9 +77,7 @@ export function ConnectionStatusBadge({ details, className }: ConnectionStatusBa
           <span className="transition-all duration-300">{config.label}</span>
         </div>
       </TooltipTrigger>
-      <TooltipContent side="bottom" className="w-48">
-        {tooltipContent}
-      </TooltipContent>
+     
     </Tooltip>
   );
 }

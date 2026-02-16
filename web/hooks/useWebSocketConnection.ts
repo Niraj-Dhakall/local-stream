@@ -83,6 +83,10 @@ const useWebSocketConnection = (
     }
     setConnectionState("disconnected");
     if (event.code === 1000 || event.code === 1001) return;
+    if (reconnecting.current >= 3) {
+      setConnectionState("error");
+      return;
+    }
     const delay = getReconnectDelay(reconnecting.current);
     scheduleReconnect(delay);
   };

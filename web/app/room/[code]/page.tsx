@@ -8,6 +8,8 @@ import ErrorComponent from "@/components/Error";
 import { ConnectionStatusBadge } from "@/components/StatusDot";
 import { RoomClosureModal } from "@/components/RoomClosureModal";
 import { API_URL } from "@/lib/config";
+import { useRoomHealthCheck } from "@/hooks/useRoomHealthCheck";
+import { User } from "lucide-react";
 type StreamError = {
   type: string;
   message: string;
@@ -30,7 +32,15 @@ export default function RoomPage() {
   const [connectionState, setConnectionState] = useState<ConnectionState>("initializing");
   const [roomClosing, setRoomClosing] = useState(false);
   const [streamerReconnected, setStreamerReconnected] = useState(false);
+  const [viewerCount, setViewerCount] = useState(0)
 
+  function handleViewCount(count: number){
+    setViewerCount(count);
+  }
+  useRoomHealthCheck({roomCode: roomCode, wsConnected: true, onRoomMissing() {
+    setRoomClosing(false);
+    setRoomExists(false);
+  },})
   useEffect(() => {
     const fetchData = async () => {
       const res = await fetch(`${API_URL}/api/rooms/viewer?room=${roomCode}`, {
@@ -73,27 +83,8 @@ export default function RoomPage() {
     }
   }
 
-  if (!roomExists) {
-    return (
-      <div className="min-h-screen bg-black flex items-center justify-center p-4">
-        <div className="w-full max-w-sm">
-          <div className="text-center mb-10">
-            <button
-              onClick={() => router.push(`/`)}
-              className="text-neutral-600 hover:text-white transition-colors text-lg mb-6 inline-block cursor-pointer"
-            >
-              &larr; back
-            </button>
 
-            <p className="text-lg text-white font-bold">
-              Sorry the room does not exist or may have been closed.
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-  if (!role && roomExists) {
+  if (!role && roomExists ) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center p-4">
         <div className="w-full max-w-sm">
@@ -129,45 +120,66 @@ export default function RoomPage() {
   }
 
   return (
-    <div className="min-h-screen bg-black">
-      <div className="flex items-baseline gap-3 px-4 py-3 border-b border-neutral-800">
-        <button
-          onClick={() => setRole(null)}
-          className="text-neutral-600 hover:text-white transition-colors text-sm  inline-block cursor-pointer"
-        >
-          &larr; back
-        </button>
-        <span className="text-white text-md font-medium tracking-wide">{roomCode}</span>
-        <span className="text-neutral-600 text-md">
-          {role === "streamer" ? "streaming" : "watching"}
-        </span>
-        <ConnectionStatusBadge details={connectionState} />
+    <div>
+      <div className={`min-h-screen bg-black flex items-center ${!roomExists ? "": "hidden"} justify-center p-4`}>
+        <div className="w-full max-w-sm">
+          <div className="text-center mb-10">
+            <button
+              onClick={() => router.push(`/`)}
+              className="text-neutral-600 hover:text-white transition-colors text-lg mb-6 inline-block cursor-pointer"
+            >
+              &larr; back
+            </button>
+
+            <p className="text-lg text-white font-bold">
+              Sorry the room does not exist or may have been closed.
+            </p>
+          </div>
+        </div>
       </div>
-      <div className="w-full flex justify-end z-10 fixed">
-        {streamError.message ? (
-          <ErrorComponent Message={streamError.message} Type={streamError.type} />
-        ) : (
-          ""
-        )}
-      </div>
-      {roomClosing && (
-        <RoomClosureModal
-          roomCode={roomCode}
-          streamerReconnected={streamerReconnected}
-          onStreamerReconnected={() => {
-            setRoomClosing(false);
-            setStreamerReconnected(false);
-            setstreamError({ type: "", message: "" });
-          }}
-        />
+      {roomExists && (
+        <div className="min-h-screen bg-black">
+          <div className="flex items-baseline gap-3 px-4 py-3 border-b border-neutral-800">
+            <button
+              onClick={() => setRole(null)}
+              className="text-neutral-600 hover:text-white transition-colors text-sm  inline-block cursor-pointer"
+            >
+              &larr; back
+            </button>
+            <span className="text-white text-md font-medium tracking-wide">{roomCode}</span>
+            <span className="text-neutral-600 text-md">
+              {role === "streamer" ? "streaming" : "watching"}
+            </span>
+            <ConnectionStatusBadge details={connectionState} />
+            <span className="text-neutral-500 text-sm flex items-baseline-safe gap-1"><User className="text-neutral-500 h-4 w-4"/> {viewerCount} </span>
+          </div>
+          <div className="w-full flex justify-end z-10 fixed">
+            {streamError.message ? (
+              <ErrorComponent Message={streamError.message} Type={streamError.type} />
+            ) : (
+              ""
+            )}
+          </div>
+          {roomClosing && (
+            <RoomClosureModal
+              roomCode={roomCode}
+              streamerReconnected={streamerReconnected}
+              onStreamerReconnected={() => {
+                setRoomClosing(false);
+                setStreamerReconnected(false);
+                setstreamError({ type: "", message: "" });
+              }}
+            />
+          )}
+          <div className={`p-4 ${roomClosing ? "hidden" : ""}`}>
+            {role === "streamer" ? (
+              <StreamerView roomCode={roomCode} onError={handleError} setConnection={setState} setViewerCount={handleViewCount} />
+            ) : (
+              <ViewerView roomCode={roomCode} onError={handleError} setConnection={setState}  setViewerCount={handleViewCount}/>
+            )}
+          </div>
+        </div>
       )}
-      <div className={`p-4 ${roomClosing ? "hidden" : ""}`}>
-        {role === "streamer" ? (
-          <StreamerView roomCode={roomCode} onError={handleError} setConnection={setState} />
-        ) : (
-          <ViewerView roomCode={roomCode} onError={handleError} setConnection={setState} />
-        )}
-      </div>
     </div>
   );
 }
