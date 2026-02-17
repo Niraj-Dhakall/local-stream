@@ -1,17 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { WS_URL } from "@/lib/config";
 
-/*
-USAGE EXAMPLE:
-const { ws, connectionState, sendMessage, reconnect } = useWebSocketConnection({
-  roomCode,
-  role: "streamer",
-  onMessage: handleMessage,
-  onError
-});
-*/
-
-// connection states for StatusDot.tsx
 type ConnectionState =
   | "initializing"
   | "connecting"
@@ -93,7 +82,7 @@ const useWebSocketConnection = (
   // handle Websocket error
   const handleError = () => {
     setConnectionState("error");
-    props.onError?.({ type: "error", message: "Connection error" });
+    props.onError?.({ type: "Error", message: "Connection error" });
   };
   const getReconnectDelay = (attempt: number): number => {
     const delays = [1000, 3000, 5000];

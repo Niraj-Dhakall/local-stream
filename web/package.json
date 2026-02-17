@@ -1,10 +1,10 @@
 {
-  "name": "window-stream-web",
+  "name": "LocalStream",
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -H 0.0.0.0",
-    "dev:https": "next dev -H 0.0.0.0 --experimental-https-key ./key.pem --experimental-https-cert ./cert.pem",
+    "dev": "next dev ",
+    "dev:https": "next dev -H 0.0.0.0 --experimental-https --experimental-https-key ./key.pem --experimental-https-cert ./cert.pem",
     "build": "next build",
     "start": "next start"
   },

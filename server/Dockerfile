@@ -9,5 +9,6 @@ FROM ubuntu:latest
 WORKDIR /app
 
 COPY --from=build /app/server .
+COPY --from=build /app/cert.pem /app/key.pem ./
 EXPOSE 8080
 CMD ["./server"]

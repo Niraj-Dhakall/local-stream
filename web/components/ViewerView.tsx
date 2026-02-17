@@ -22,11 +22,16 @@ interface ViewerViewProps {
   setViewerCount: (count: number) => void;
 }
 
-export default function ViewerView({ roomCode, onError, setConnection, setViewerCount }: ViewerViewProps) {
+export default function ViewerView({
+  roomCode,
+  onError,
+  setConnection,
+  setViewerCount,
+}: ViewerViewProps) {
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const viewerID = useRef(crypto.randomUUID()).current;
-  const {sendMessage, connectionState } = useWebSocketConnection({
+  const { sendMessage, connectionState } = useWebSocketConnection({
     roomCode,
     role: "viewer",
     onMessage: handleMessage,
@@ -34,7 +39,6 @@ export default function ViewerView({ roomCode, onError, setConnection, setViewer
     viewerID: viewerID,
   });
 
-  
   useEffect(() => {
     setConnection(connectionState);
   }, [connectionState]);
@@ -49,7 +53,7 @@ export default function ViewerView({ roomCode, onError, setConnection, setViewer
         break;
       }
       case "streamer-reconnected": {
-        onError({ type: "Message", message: "Streamer has reconnected" })
+        onError({ type: "Message", message: "Streamer has reconnected" });
         break;
       }
       case "ice-candidate": {
@@ -57,6 +61,10 @@ export default function ViewerView({ roomCode, onError, setConnection, setViewer
         break;
       }
       case "viewer-message": {
+        if (msg.message.includes("Streamer has left, room will be closed in 30 seconds.")) {
+          onError({ type: "Error", message: msg.message });
+          break;
+        }
         onError({ type: "Message", message: msg.message });
         break;
       }

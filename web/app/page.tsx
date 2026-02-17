@@ -106,14 +106,14 @@ export default function Home() {
               onKeyDown={(e) => e.key === "Enter" && joinRoom(joinCode)}
               placeholder="Room code"
               maxLength={6}
-              className="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-3 text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-600 transition-colors text-sm tracking-widest"
+              className="flex-1 bg-neutral-900 border border-neutral-500 rounded-lg px-4 py-3 text-white placeholder-white focus:outline-none focus:border-neutral-600 transition-colors text-sm tracking-widest"
             />
             <button
               onClick={() => {
                 joinRoom(joinCode);
               }}
               disabled={!joinCode.trim()}
-              className="bg-neutral-900 border border-neutral-800 text-white px-5 py-3 rounded-lg font-medium hover:bg-neutral-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              className="bg-white border border-neutral-800 text-black px-5 py-3 rounded-lg font-medium hover:bg-gray-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
               Join
             </button>

@@ -626,7 +626,7 @@ func main() {
 	http.HandleFunc("/api/rooms/viewer", handleViewerRoomCheck) // checks if a room is still active
 	http.HandleFunc("/api/rooms/streamer", handleRoomStreamerCheck) // checks if a room has a streamer (for protection against someone overriding stream)
 	slog.Info("Server starting", "port", ":8080")
-	err := http.ListenAndServe(":8080", nil)
+	err := http.ListenAndServeTLS(":8080", "cert.pem", "key.pem", nil)
 	if err != nil {
 		slog.Error("Server failed", "error", err)
 	}
