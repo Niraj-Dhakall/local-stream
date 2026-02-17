@@ -137,7 +137,7 @@ Windows(powershell): ipconfig | Select-String "IPv4"
 Windows(cmd): ipconfig | findstr "IPv4"
 ```
 
-On first visit, your browser will show a certificate warning — please accept it. You will also need to accept the certificate for the backend by visiting `https://<your-local-ip>:8080` once.
+On first visit, your browser will show a certificate warning, please accept it. You will also need to accept the certificate for the backend by visiting `https://<your-local-ip>:8080` once.
 
 ### Manual Setup
 
